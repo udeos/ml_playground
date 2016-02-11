@@ -5,24 +5,18 @@ import numpy as np
 from sklearn.base import ClassifierMixin, BaseEstimator
 
 
-class Tree(object):
-    def __init__(self, cls=None, entropy=None,
-                 predicate=None, left=None, right=None):
+class BTree(object):
+    def __init__(self, predicate, left, right, params):
         self.predicate = predicate
         self.left, self.right = left, right
-        self.entropy = entropy
-        self.cls = cls
+        self.params = params
 
     def __str__(self):
-        name = []
-        if self.predicate is not None:
-            name.append('X[%s] <= %s' % (self.predicate[0],
-                                         round(self.predicate[1], 4)))
-        if self.cls is not None:
-            name.append('C = %s' % self.cls)
-        if self.entropy is not None:
-            name.append('E = %s' % round(self.entropy, 4))
-        return '\n'.join(name)
+        descr = []
+        if self.predicate:
+            descr.append('X[%s] <= %s' % (self.predicate[0], round(self.predicate[1], 4)))
+        descr.extend(['%s = %s' % (k, v) for k, v in self.params.items()])
+        return '\n'.join(descr)
 
     def to_graphviz(self):
         graph = pydot.Dot(graph_type='digraph')
@@ -41,7 +35,7 @@ class Tree(object):
         return graph
 
 
-class ClassicDecisionTree(ClassifierMixin, BaseEstimator):
+class DecisionTreeClassifier(ClassifierMixin, BaseEstimator):
     def __init__(self):
         self.tree = None
 
@@ -55,15 +49,17 @@ class ClassicDecisionTree(ClassifierMixin, BaseEstimator):
     def fit(self, X, Y):
 
         def build(XX, YY):
+            params = {'entropy': self.get_entropy(YY)}
+            left = right = None
             predicate = self.find_predicate(XX, YY)
-            if predicate is None:
-                return Tree(cls=YY[0], entropy=self.get_entropy(YY))
-            f_id, f_val = predicate
-            mask = XX[:, f_id] <= f_val
-            return Tree(entropy=self.get_entropy(YY),
-                        predicate=predicate,
-                        left=build(XX[mask], YY[mask]),
-                        right=build(XX[~mask], YY[~mask]))
+            if predicate:
+                f_id, f_val = predicate
+                mask = XX[:, f_id] <= f_val
+                left = build(XX[mask], YY[mask])
+                right = build(XX[~mask], YY[~mask])
+            else:
+                params['class'] = YY[0]
+            return BTree(predicate, left, right, params)
 
         self.tree = build(X, Y)
 
@@ -92,10 +88,16 @@ class ClassicDecisionTree(ClassifierMixin, BaseEstimator):
 
         def go_deep(tree, obj):
             if tree.predicate is None:
-                return tree.cls
+                return tree.params['class']
             f_id, f_val = tree.predicate
             if obj[f_id] <= f_val:
                 return go_deep(tree.left, obj)
             return go_deep(tree.right, obj)
 
-        return np.array([go_deep(self.tree, obj) for obj in X])
+        leafs = np.array([go_deep(self.tree, obj) for obj in X])
+        return leafs
+
+    def draw_tree(self, filename):
+        if self.tree is None:
+            raise Exception("Tree is not built yet")
+        self.tree.to_graphviz().write_png(filename)
